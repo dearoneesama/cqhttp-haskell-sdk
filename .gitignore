@@ -1,0 +1,5 @@
+.stack-work/
+cqhttp.cabal
+dist-newstyle/
+*.hi
+*.o

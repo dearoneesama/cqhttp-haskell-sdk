@@ -1,0 +1,38 @@
+name:                cqhttp
+version:             0.1.0.0
+github:              t532/cqhttp-haskell-sdk
+license:             MIT
+author:              t532
+maintainer:          t532@foxmail.com
+copyright:           2020 t532
+
+extra-source-files:
+- README.md
+
+synopsis:            Simple typed interface to CoolQ HTTP API.
+category:            Web
+description:         Please see the README on GitHub at <https://github.com/t532/cqhttp#readme>
+
+dependencies:
+- base >= 4.7 && < 5
+- req
+- aeson
+- text
+- bytestring
+- scotty
+- cryptonite
+- http-types
+
+library:
+  source-dirs: src
+
+tests:
+  cqhttp-test:
+    main:                Spec.hs
+    source-dirs:         test
+    ghc-options:
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - cqhttp
