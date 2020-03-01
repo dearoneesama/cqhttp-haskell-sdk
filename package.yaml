@@ -15,14 +15,18 @@ description:         Please see the README on GitHub at <https://github.com/t532
 
 dependencies:
 - base >= 4.7 && < 5
+- async
 - req
+- scotty
 - aeson
 - text
 - bytestring
-- scotty
 - cryptonite
 - http-types
-- async
+- time
+- unordered-containers
+- mtl
+- scientific
 
 library:
   source-dirs: src
