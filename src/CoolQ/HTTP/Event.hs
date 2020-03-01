@@ -34,19 +34,21 @@ import Network.HTTP.Types
   ( ok200
   , unauthorized401
   , forbidden403 )
+import Control.Concurrent.Async
+  ( mapConcurrently )
 
 data EventConfig =
   EventConfig
-  { listenPort :: Int
-  , secret :: Maybe ByteString }
+  { eventPort :: Int
+  , eventSecret :: Maybe ByteString }
 type EventHandler = Object -> IO ()
 
 listen :: EventConfig -> [EventHandler] -> IO ()
-listen conf handlers = scotty (listenPort conf) $
+listen conf handlers = scotty (eventPort conf) $
   post "/" $ do
     raw <- body
     rawSig <- header "X-Signature"
-    case (secret conf, rawSig) of
+    case (eventSecret conf, rawSig) of
       (Just sec, Just reqSig) ->
         let sig = hmacGetDigest (hmac sec (toStrict raw)) :: Digest SHA1
         in if reqSig == fromString (show sig)
@@ -57,5 +59,5 @@ listen conf handlers = scotty (listenPort conf) $
       (Nothing, _) ->
         status ok200
     raw <- jsonData
-    liftIO $ sequence (($ raw) <$> handlers)
+    liftIO $ ($ raw) `mapConcurrently` handlers
     finish

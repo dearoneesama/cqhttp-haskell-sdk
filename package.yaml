@@ -22,6 +22,7 @@ dependencies:
 - scotty
 - cryptonite
 - http-types
+- async
 
 library:
   source-dirs: src

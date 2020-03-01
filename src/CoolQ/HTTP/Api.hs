@@ -19,27 +19,30 @@ import Data.Functor
   ( (<&>) )
 import Control.Monad.IO.Class
   ( MonadIO )
+import Control.Concurrent.Async
+  ( async
+  , Async )
 
 data ApiConfig s =
   ApiConfig
-  { host :: Text
-  , hostPort :: Int
-  , accessToken :: Maybe ByteString }
-type ApiCaller m =
-   Text -> Value -> m Value
+  { apiHost :: Text
+  , apiPort :: Int
+  , apiToken :: Maybe ByteString }
+type ApiCaller =
+   Text -> Value -> IO (Async Value)
 
-api :: MonadIO m => HttpConfig -> ApiConfig s -> ApiCaller m
+api :: HttpConfig -> ApiConfig s -> ApiCaller
 api httpConf conf method payload =
-  runReq httpConf $ responseBody <$> res where
+  async $ runReq httpConf $ responseBody <$> res where
   res =
     req POST
-    (http (host conf) /: method)
+    (http (apiHost conf) /: method)
     (ReqBodyJson payload)
     (jsonResponse)
     (authOpt <> portOpt)
   authOpt =
     fromMaybe mempty $
-      accessToken conf
+      apiToken conf
       <&> (<>) "Bearer "
       <&> header "Authorization"
-  portOpt = port $ hostPort conf
+  portOpt = port $ apiPort conf
