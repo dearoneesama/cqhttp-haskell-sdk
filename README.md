@@ -11,41 +11,42 @@
   - [ ] events
     - [x] structure
     - [ ] types
-- [ ] `CoolQ.WS.Client`
-  - [ ] api
-    - [ ] structure
-    - [ ] types
-  - [ ] events
-    - [ ] structure
-    - [ ] types
-- [ ] `CoolQ.WS.Server` (ws-reverse)
-  - [ ] api
-    - [ ] structure
-    - [ ] types
-  - [ ] events
-    - [ ] structure
-    - [ ] types
+- [ ] Tests
+
+> 目前没有支持 WebSocket/反向 WebSocket 的计划，因为太难写了。如果您乐意贡献相关内容，我很欢迎。
 
 ## 示例
 
 ```haskell
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE  OverloadedStrings #-}
 import CoolQ.HTTP.Api
 import CoolQ.HTTP.Event
-import Web.Scotty as S
+import Data.Text (Text)
+import Network.HTTP.Req (defaultHttpConfig)
 import Data.HashMap.Strict ((!))
-import Data.Aeson ((.=))
+import Data.Aeson ((.=), object)
+
+call :: ApiCaller IO
+call = api defaultHttpConfig
+  (ApiConfig
+  { host = "localhost"
+  , hostPort = 5700
+  , accessToken = Just "my-access-token" })
 
 myListener :: EventHandler
-myListener event = do
+myListener event =
   if event!"post_type" == "message"
-    then S.json ["reply" .= "Hi!"]
-    else pure ()
+  then do
+    call "send_private_msg" $ object $
+      [ "user_id" .= event!"user_id"
+      , "message" .= ("Pong!" :: Text) ]
+    pure ()
+  else pure ()
 
 main :: IO ()
 main = listen
   (EventConfig
-  { port = 8080
-  , secret = "my-secret" })
+  { listenPort = 8080
+  , secret = Just "my-secret" })
   [myListener]
 ```

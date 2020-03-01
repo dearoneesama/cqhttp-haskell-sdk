@@ -1,10 +1,14 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE  OverloadedStrings
+            , ExistentialQuantification #-}
 
-module CoolQ.HTTP.Api where
-
+module CoolQ.HTTP.Api
+  ( ApiConfig (..)
+  , ApiCaller
+  , api ) where
 import Network.HTTP.Req
 import Data.Aeson
-  ( Value )
+  ( Value
+  , object )
 import Data.Text
   ( Text )
 import Data.ByteString
@@ -13,19 +17,23 @@ import Data.Maybe
   ( fromMaybe )
 import Data.Functor
   ( (<&>) )
+import Control.Monad.IO.Class
+  ( MonadIO )
 
 data ApiConfig s =
   ApiConfig
-  { host :: Url s
+  { host :: Text
   , hostPort :: Int
   , accessToken :: Maybe ByteString }
+type ApiCaller m =
+   Text -> Value -> m Value
 
-api :: MonadHttp m => ApiConfig s -> Text -> Value -> m Value
-api conf method payload =
-  responseBody <$> res where
+api :: MonadIO m => HttpConfig -> ApiConfig s -> ApiCaller m
+api httpConf conf method payload =
+  runReq httpConf $ responseBody <$> res where
   res =
     req POST
-    (host conf /: method)
+    (http (host conf) /: method)
     (ReqBodyJson payload)
     (jsonResponse)
     (authOpt <> portOpt)

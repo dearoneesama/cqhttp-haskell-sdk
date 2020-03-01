@@ -1,6 +1,10 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE  OverloadedStrings
+            , ExistentialQuantification #-}
 
-module CoolQ.HTTP.Event where
+module CoolQ.HTTP.Event
+  ( EventConfig (..)
+  , EventHandler
+  , listen ) where
 
 import Web.Scotty
 import Data.Aeson
@@ -33,13 +37,13 @@ import Network.HTTP.Types
 
 data EventConfig =
   EventConfig
-  { port :: Int
+  { listenPort :: Int
   , secret :: Maybe ByteString }
-type EventHandler = Object -> ActionM ()
+type EventHandler = Object -> IO ()
 
 listen :: EventConfig -> [EventHandler] -> IO ()
-listen conf handlers = scotty (port conf) $
-  get "/" $ do
+listen conf handlers = scotty (listenPort conf) $
+  post "/" $ do
     raw <- body
     rawSig <- header "X-Signature"
     case (secret conf, rawSig) of
@@ -53,5 +57,5 @@ listen conf handlers = scotty (port conf) $
       (Nothing, _) ->
         status ok200
     raw <- jsonData
-    sequence (($ raw) <$> handlers)
+    liftIO $ sequence (($ raw) <$> handlers)
     finish
