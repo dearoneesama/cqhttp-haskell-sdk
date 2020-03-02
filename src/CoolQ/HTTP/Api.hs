@@ -10,7 +10,9 @@ module CoolQ.HTTP.Api
 import Network.HTTP.Req
 import Data.Aeson
   ( Value (Number, Object)
-  , object )
+  , object
+  , Object
+  , (.=) )
 import Data.Text
   ( Text )
 import Data.ByteString
@@ -21,46 +23,50 @@ import Data.Functor
   ( (<&>) )
 import Control.Monad.IO.Class
   ( MonadIO )
-import Control.Concurrent.Async
-  ( async
-  , Async )
-import Data.Time.Clock
-  ( NominalDiffTime )
 import Data.HashMap.Strict
   ( (!) )
-import Control.Monad.Except
-  ( catchError )
+import Control.Exception
+  ( throw
+  , catch
+  , Exception )
 import Data.Scientific
-  ( toRealFloat )
+  ( Scientific
+  , toRealFloat )
+import Data.Functor
+  ( (<&>) )
 
 data ApiConfig =
   ApiConfig
   { apiHost :: Text
   , apiPort :: Int
   , apiToken :: Maybe ByteString }
+  deriving (Show, Eq)
+type ApiCaller =
+  Text -> [(Text, Value)] -> IO Object
 
 type Retcode = Int
+data CQException = CQException Retcode
+  deriving (Show, Eq)
+instance Exception CQException
 
-type Result a = IO (Async (Either Retcode a))
-
-type ApiCaller =
-  Text -> Value -> Result Value
+toInt :: Scientific -> Int
+toInt = floor . toRealFloat
 
 makeApiCaller :: HttpConfig -> ApiConfig -> ApiCaller
-makeApiCaller httpConf conf method payload = async $ do
+makeApiCaller httpConf conf method payload = do
   rawResponse <- runReq httpConf $ responseBody <$> request
   case rawResponse of
     (Object response) ->
       case response!"retcode" of
-        (Number 0) -> pure $ Right (response!"data")
-        (Number x) -> pure $ Left (floor $ toRealFloat x)
+        (Number 0) -> return (let (Object obj) = response!"data" in obj)
+        (Number x) -> throw (CQException $ toInt x)
         _ -> error "retcode is not a number"
     _ -> error "unexpected response"
   where
     request =
       req POST
       (http (apiHost conf) /: method)
-      (ReqBodyJson payload)
+      (ReqBodyJson $ object payload)
       (jsonResponse)
       (authOpt <> portOpt)
     authOpt =
@@ -70,42 +76,166 @@ makeApiCaller httpConf conf method payload = async $ do
         <&> header "Authorization"
     portOpt = port $ apiPort conf
 
-{-
--- TODO
-sendPrivateMsg :: UserId -> Message -> Result MessageId
+type UserId = Int
+type GroupId = Int
+type DiscussId = Int
+type MessageId = Int
+data MessageType =
+  PrivateMessage |
+  GroupMessage |
+  DiscussMessage
+  deriving (Show, Eq)
+type AnonymousFlag = Text
+type Message = [Value]
+type Duration = Int
 
+discard :: Monad m => m a -> m ()
+discard = (>> pure ())
 
-sendGroupMsg :: GroupId -> Message -> Result MessageId
+sendPrivateMsg :: ApiCaller -> UserId -> Message -> IO MessageId
+sendPrivateMsg api user msg = do
+  (Number id) <- raw <&> (!"message_id")
+  pure $ toInt id
+  where
+    raw = api "send_private_msg"
+      [ "user_id" .= user
+      , "message" .= msg ]
 
+sendGroupMsg :: ApiCaller -> GroupId -> Message -> IO MessageId
+sendGroupMsg api group msg = do
+  (Number id) <- raw <&> (!"message_id")
+  pure $ toInt id
+  where
+    raw = api "send_group_msg"
+      [ "group_id" .= group
+      , "message" .= msg ]
 
-sendDiscussMsg :: DiscussId -> Message -> Result MessageId
+sendDiscussMsg :: ApiCaller -> DiscussId -> Message -> IO MessageId
+sendDiscussMsg api discuss msg = do
+  (Number id) <- raw <&> (!"message_id")
+  pure $ toInt id
+  where
+    raw = api "send_discuss_msg"
+      [ "discuss_id" .= discuss
+      , "message" .= msg ]
 
+sendMsg :: ApiCaller -> MessageType -> Int -> Message -> IO MessageId
+sendMsg api typ id msg = do
+  (Number id) <- raw <&> (!"message_id")
+  pure $ toInt id
+  where
+    raw = api "send_msg"
+      [ "message" .= msg
+      , (case typ of
+          PrivateMessage -> "user_id"
+          DiscussMessage -> "discuss_id"
+          GroupMessage -> "group_id") .= id]
 
-sendMsg :: MessageType -> Int -> Message -> Result MessageId
+deleteMsg :: ApiCaller -> MessageId -> IO ()
+deleteMsg api id = discard $
+  api "delete_msg"
+    [ "message_id" .= id ]
 
+sendLike :: ApiCaller -> UserId -> Int-> IO ()
+sendLike api user times = discard $
+  api "send_like"
+    [ "user_id" .= user
+    , "times" .= times ]
 
-deleteMsg :: MessageId -> Result ()
+setGroupKick :: ApiCaller -> GroupId -> UserId -> Bool -> IO ()
+setGroupKick api group user rejectAddRequest = discard $
+  api "set_group_kick"
+    [ "group_id" .= group
+    , "user_id" .= user
+    , "reject_add_request" .= rejectAddRequest ]
 
+setGroupBan :: ApiCaller -> GroupId -> UserId -> Duration -> IO ()
+setGroupBan api group user duration = discard $
+  api "set_group_ban"
+    [ "group_id" .= group
+    , "user_id" .= user
+    , "duration" .= duration ]
 
-sendLike :: UserId -> Int -> Result ()
+unsetGroupBan :: ApiCaller -> GroupId -> UserId -> IO ()
+unsetGroupBan api group user =
+  setGroupBan api group user 0
 
+setGroupAnonymousBan :: ApiCaller -> GroupId -> AnonymousFlag -> Duration -> IO ()
+setGroupAnonymousBan api group flag duration = discard $
+  api "set_group_anonymous_ban"
+    [ "group_id" .= group
+    , "anonymous_flag" .= flag
+    , "duration" .= duration ]
 
-setGroupKick :: GroupId -> UserId -> Bool -> Result ()
+switchGroupWholeBan :: ApiCaller -> GroupId -> Bool -> IO ()
+switchGroupWholeBan api group enable = discard $
+  api "set_group_whole_ban"
+    [ "group_id" .= group
+    , "enable" .= enable ]
 
+setGroupWholeBan :: ApiCaller -> GroupId -> IO ()
+setGroupWholeBan api group =
+  switchGroupWholeBan api group True
 
-setGroupBan :: GroupId -> UserId -> NominalDiffTime -> Result ()
+unsetGroupWholeBan :: ApiCaller -> GroupId -> IO ()
+unsetGroupWholeBan api group =
+  switchGroupWholeBan api group False
 
+switchGroupAdmin :: ApiCaller -> GroupId -> UserId -> Bool -> IO ()
+switchGroupAdmin api group user enable = discard $
+  api "set_group_admin"
+    [ "group_id" .= group
+    , "user_id" .= user
+    , "enable" .= enable]
 
-unsetGroupBan :: GroupId -> UserId -> Result ()
+setGroupAdmin :: ApiCaller -> GroupId -> UserId -> IO ()
+setGroupAdmin api group user =
+  switchGroupAdmin api group user True
 
+unsetGroupAdmin :: ApiCaller -> GroupId -> UserId -> IO ()
+unsetGroupAdmin api group user =
+  switchGroupAdmin api group user False
 
-setGroupAnonymousBan :: GroupId -> AnonymousFlag -> NominalDiffTime -> Result ()
+switchGroupAnonymous :: ApiCaller -> GroupId -> Bool -> IO ()
+switchGroupAnonymous api group enable = discard $
+  api "set_group_anonymous"
+    [ "group_id" .= group
+    , "enable" .= enable]
 
+setGroupAnonymous :: ApiCaller -> GroupId -> IO ()
+setGroupAnonymous api group =
+  switchGroupAnonymous api group True
 
-setGroupWholeBan :: GroupId -> Result ()
+unsetGroupAnonymous :: ApiCaller -> GroupId -> IO ()
+unsetGroupAnonymous api group =
+  switchGroupAnonymous api group False
 
+setGroupCard :: ApiCaller -> GroupId -> UserId -> Text -> IO ()
+setGroupCard api group user card = discard $
+  api "set_group_card"
+    [ "group_id" .= group
+    , "user_id" .= user
+    , "card" .= card ]
 
-unsetGroupWholeBan :: GroupId -> Result ()
+setGroupLeave :: ApiCaller -> GroupId -> IO ()
+setGroupLeave api group = discard $
+  api "set_group_leave"
+    [ "group_id" .= group ]
 
-...
--}
+setGroupDismiss :: ApiCaller -> GroupId -> IO ()
+setGroupDismiss api group = discard $
+  api "set_group_leave"
+    [ "group_id" .= group
+    , "is_dismiss" .= True ]
+
+setGroupSpecialTitle :: ApiCaller -> GroupId -> UserId -> Text -> IO ()
+setGroupSpecialTitle api group user title = discard $
+  api "set_group_special_title"
+    [ "group_id" .= group
+    , "user_id" .= user
+    , "special_title" .= title ]
+
+setDiscussLeave :: ApiCaller -> DiscussId -> IO ()
+setDiscussLeave api discuss = discard $
+  api "set_discuss_leave"
+    [ "discuss_id" .= discuss ]
