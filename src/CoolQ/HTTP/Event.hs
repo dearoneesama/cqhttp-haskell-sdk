@@ -3,7 +3,6 @@
 
 module CoolQ.HTTP.Event
   ( EventConfig (..)
-  , EventHandler
   , listen ) where
 
 import Web.Scotty
@@ -27,7 +26,8 @@ import Crypto.Hash.Algorithms
 import Crypto.Hash
   ( Digest )
 import Control.Monad.IO.Class
-  ( liftIO )
+  ( MonadIO
+  , liftIO )
 import Data.String
   ( fromString )
 import Network.HTTP.Types
@@ -36,15 +36,18 @@ import Network.HTTP.Types
   , forbidden403 )
 import Control.Concurrent.Async
   ( mapConcurrently )
+import CoolQ.HTTP.Api
+  ( ApiCaller
+  , ApiT (runApiT)
+  , ApiM )
 
 data EventConfig =
   EventConfig
   { eventPort :: Int
   , eventSecret :: Maybe ByteString }
-type EventHandler = Object -> IO ()
 
-listen :: EventConfig -> [EventHandler] -> IO ()
-listen conf handlers = scotty (eventPort conf) $
+listen :: EventConfig -> ApiCaller IO -> [Object -> ApiM ()] -> IO ()
+listen conf caller handlers = scotty (eventPort conf) $
   post "/" $ do
     raw <- body
     rawSig <- header "X-Signature"
@@ -59,5 +62,5 @@ listen conf handlers = scotty (eventPort conf) $
       (Nothing, _) ->
         status ok200
     raw <- jsonData
-    liftIO $ ($ raw) `mapConcurrently` handlers
+    liftIO $ (flip runApiT caller . ($ raw)) `mapConcurrently` handlers
     finish

@@ -1,80 +1,77 @@
 {-# LANGUAGE  OverloadedStrings
-            , ExistentialQuantification
             , DeriveGeneric
             , DuplicateRecordFields #-}
 
 module CoolQ.HTTP.Api
   ( ApiConfig (..)
-  , ApiCaller ()
-  , makeApiCaller ) where
-import Network.HTTP.Req
+  , ApiCaller
+  , Retcode
+  , CQException
+  , makeApiCaller
+  , ApiT (..)
+  , ApiM
+  , UserId
+  , GroupId
+  , DiscussId
+  , MessageId
+  , MessageType (..)
+  , GroupRequestType (..)
+  , AnonymousFlag
+  , RequestFlag
+  , Message
+  , Duration
+  , callApi
+  , sendPrivateMsg
+  , sendGroupMsg
+  , sendDiscussMsg
+  , sendMsg
+  , deleteMsg
+  , sendLike
+  , setGroupKick
+  , setGroupBan
+  , unsetGroupBan
+  , setGroupAnonymousBan
+  , switchGroupWholeBan
+  , setGroupWholeBan
+  , unsetGroupWholeBan
+  , switchGroupAdmin
+  , setGroupAdmin
+  , unsetGroupAdmin
+  , switchGroupAnonymous
+  , setGroupAnonymous
+  , unsetGroupAnonymous
+  , setGroupCard
+  , setGroupLeave
+  , setGroupDismiss
+  , setGroupSpecialTitle
+  , setDiscussLeave
+  , setFriendAddRequest
+  , approveFriendAddRequest
+  , rejectFriendAddRequest
+  , setGroupAddRequest
+  , approveGroupAddRequest
+  , rejectGroupAddRequest
+  , LoginInfo (..)
+  , getLoginInfo
+  , StrangerInfo (..)
+  , getStrangerInfo
+  , getUncachedStrangerInfo ) where
+import CoolQ.HTTP.Api.Caller
+import CoolQ.HTTP.Api.Monad
+import GHC.Generics
+  ( Generic )
 import Data.Aeson
   ( Value (Number, Object)
-  , object
-  , Object
-  , (.=) )
+  , (.=)
+  , FromJSON
+  , fromJSON
+  , Result (Success) )
 import Data.Text
   ( Text )
-import Data.ByteString
-  ( ByteString )
-import Data.Maybe
-  ( fromMaybe )
-import Data.Functor
-  ( (<&>) )
 import Control.Monad.IO.Class
   ( MonadIO )
 import Data.HashMap.Strict
   ( (!) )
-import Control.Exception
-  ( throw
-  , catch
-  , Exception )
-import Data.Scientific
-  ( Scientific
-  , toRealFloat )
-import Data.Functor
-  ( (<&>) )
-
-data ApiConfig =
-  ApiConfig
-  { apiHost :: Text
-  , apiPort :: Int
-  , apiToken :: Maybe ByteString }
-  deriving (Show, Eq)
-type ApiCaller =
-  Text -> [(Text, Value)] -> IO Object
-
-type Retcode = Int
-data CQException = CQException Retcode
-  deriving (Show, Eq)
-instance Exception CQException
-
-toInt :: Scientific -> Int
-toInt = floor . toRealFloat
-
-makeApiCaller :: HttpConfig -> ApiConfig -> ApiCaller
-makeApiCaller httpConf conf method payload = do
-  rawResponse <- runReq httpConf $ responseBody <$> request
-  case rawResponse of
-    (Object response) ->
-      case response!"retcode" of
-        (Number 0) -> return (let (Object obj) = response!"data" in obj)
-        (Number x) -> throw (CQException $ toInt x)
-        _ -> error "retcode is not a number"
-    _ -> error "unexpected response"
-  where
-    request =
-      req POST
-      (http (apiHost conf) /: method)
-      (ReqBodyJson $ object payload)
-      (jsonResponse)
-      (authOpt <> portOpt)
-    authOpt =
-      fromMaybe mempty $
-        apiToken conf
-        <&> (<>) "Bearer "
-        <&> header "Authorization"
-    portOpt = port $ apiPort conf
 
 type UserId = Int
 type GroupId = Int
@@ -85,157 +82,243 @@ data MessageType =
   GroupMessage |
   DiscussMessage
   deriving (Show, Eq)
+data GroupRequestType =
+  GroupAddRequest |
+  GroupInviteRequest
+  deriving (Show, Eq)
 type AnonymousFlag = Text
+type RequestFlag = Text
 type Message = [Value]
 type Duration = Int
 
 discard :: Monad m => m a -> m ()
 discard = (>> pure ())
 
-sendPrivateMsg :: ApiCaller -> UserId -> Message -> IO MessageId
-sendPrivateMsg api user msg = do
-  (Number id) <- raw <&> (!"message_id")
-  pure $ toInt id
-  where
-    raw = api "send_private_msg"
-      [ "user_id" .= user
-      , "message" .= msg ]
+liftedToInt :: Monad m => m Value -> m Int
+liftedToInt val = do
+  uval <- val
+  case uval of
+    (Number sci) -> pure (toInt sci)
+    _ -> error "The data is not a number. This should not happen"
 
-sendGroupMsg :: ApiCaller -> GroupId -> Message -> IO MessageId
-sendGroupMsg api group msg = do
-  (Number id) <- raw <&> (!"message_id")
-  pure $ toInt id
-  where
-    raw = api "send_group_msg"
-      [ "group_id" .= group
-      , "message" .= msg ]
+liftedIndex :: Monad m => Text -> m Value -> m Value
+liftedIndex idx val = do
+  uval <- val
+  case uval of
+    (Object obj) -> pure (obj!idx)
+    _ -> error "The data is not an object. This should not happen"
 
-sendDiscussMsg :: ApiCaller -> DiscussId -> Message -> IO MessageId
-sendDiscussMsg api discuss msg = do
-  (Number id) <- raw <&> (!"message_id")
-  pure $ toInt id
-  where
-    raw = api "send_discuss_msg"
-      [ "discuss_id" .= discuss
-      , "message" .= msg ]
+liftedFromJSON :: (Monad m, FromJSON a) => m Value -> m a
+liftedFromJSON val = do
+  uval <- fromJSON <$> val
+  case uval of
+    (Success obj) -> pure obj
+    _ -> error "The data is not an object. This should not happen"
 
-sendMsg :: ApiCaller -> MessageType -> Int -> Message -> IO MessageId
-sendMsg api typ id msg = do
-  (Number id) <- raw <&> (!"message_id")
-  pure $ toInt id
-  where
-    raw = api "send_msg"
-      [ "message" .= msg
-      , (case typ of
-          PrivateMessage -> "user_id"
-          DiscussMessage -> "discuss_id"
-          GroupMessage -> "group_id") .= id]
+callApi :: ApiCaller (ApiT m)
+callApi method payload = ApiT $ \env ->
+  env method payload
 
-deleteMsg :: ApiCaller -> MessageId -> IO ()
-deleteMsg api id = discard $
-  api "delete_msg"
+sendPrivateMsg :: MonadIO m => UserId -> Message -> ApiT m MessageId
+sendPrivateMsg user msg = liftedToInt $ liftedIndex "message_id" $
+  callApi "send_private_msg"
+    [ "user_id" .= user
+    , "message" .= msg ]
+
+sendGroupMsg :: MonadIO m => GroupId -> Message -> ApiT m MessageId
+sendGroupMsg group msg = liftedToInt $ liftedIndex "message_id" $
+  callApi "send_group_msg"
+    [ "group_id" .= group
+    , "message" .= msg ]
+
+sendDiscussMsg :: MonadIO m => DiscussId -> Message -> ApiT m MessageId
+sendDiscussMsg discuss msg = liftedToInt $ liftedIndex "message_id" $
+  callApi "send_discuss_msg"
+    [ "discuss_id" .= discuss
+    , "message" .= msg ]
+
+sendMsg :: MonadIO m => MessageType -> Int -> Message -> ApiT m MessageId
+sendMsg typ id msg = liftedToInt $ liftedIndex "message_id" $
+  callApi "send_msg"
+    [ "message" .= msg
+    , (case typ of
+        PrivateMessage -> "user_id"
+        DiscussMessage -> "discuss_id"
+        GroupMessage -> "group_id") .= id]
+
+deleteMsg :: MonadIO m => MessageId -> ApiT m ()
+deleteMsg id = discard $
+  callApi "delete_msg"
     [ "message_id" .= id ]
 
-sendLike :: ApiCaller -> UserId -> Int-> IO ()
-sendLike api user times = discard $
-  api "send_like"
+sendLike :: MonadIO m => UserId -> Int -> ApiT m ()
+sendLike user times = discard $
+  callApi "send_like"
     [ "user_id" .= user
     , "times" .= times ]
 
-setGroupKick :: ApiCaller -> GroupId -> UserId -> Bool -> IO ()
-setGroupKick api group user rejectAddRequest = discard $
-  api "set_group_kick"
+setGroupKick :: MonadIO m => GroupId -> UserId -> Bool -> ApiT m ()
+setGroupKick group user rejectAddRequest = discard $
+  callApi "set_group_kick"
     [ "group_id" .= group
     , "user_id" .= user
     , "reject_add_request" .= rejectAddRequest ]
 
-setGroupBan :: ApiCaller -> GroupId -> UserId -> Duration -> IO ()
-setGroupBan api group user duration = discard $
-  api "set_group_ban"
+setGroupBan :: MonadIO m => GroupId -> UserId -> Duration -> ApiT m ()
+setGroupBan group user duration = discard $
+  callApi "set_group_ban"
     [ "group_id" .= group
     , "user_id" .= user
     , "duration" .= duration ]
 
-unsetGroupBan :: ApiCaller -> GroupId -> UserId -> IO ()
-unsetGroupBan api group user =
-  setGroupBan api group user 0
+unsetGroupBan :: MonadIO m => GroupId -> UserId -> ApiT m ()
+unsetGroupBan group user =
+  setGroupBan group user 0
 
-setGroupAnonymousBan :: ApiCaller -> GroupId -> AnonymousFlag -> Duration -> IO ()
-setGroupAnonymousBan api group flag duration = discard $
-  api "set_group_anonymous_ban"
+setGroupAnonymousBan :: MonadIO m => GroupId -> AnonymousFlag -> Duration -> ApiT m ()
+setGroupAnonymousBan group flag duration = discard $
+  callApi "set_group_anonymous_ban"
     [ "group_id" .= group
     , "anonymous_flag" .= flag
     , "duration" .= duration ]
 
-switchGroupWholeBan :: ApiCaller -> GroupId -> Bool -> IO ()
-switchGroupWholeBan api group enable = discard $
-  api "set_group_whole_ban"
+switchGroupWholeBan :: MonadIO m => GroupId -> Bool -> ApiT m ()
+switchGroupWholeBan group enable = discard $
+  callApi "set_group_whole_ban"
     [ "group_id" .= group
     , "enable" .= enable ]
 
-setGroupWholeBan :: ApiCaller -> GroupId -> IO ()
-setGroupWholeBan api group =
-  switchGroupWholeBan api group True
+setGroupWholeBan :: MonadIO m => GroupId -> ApiT m ()
+setGroupWholeBan group =
+  switchGroupWholeBan group True
 
-unsetGroupWholeBan :: ApiCaller -> GroupId -> IO ()
-unsetGroupWholeBan api group =
-  switchGroupWholeBan api group False
+unsetGroupWholeBan :: MonadIO m => GroupId -> ApiT m ()
+unsetGroupWholeBan group =
+  switchGroupWholeBan group False
 
-switchGroupAdmin :: ApiCaller -> GroupId -> UserId -> Bool -> IO ()
-switchGroupAdmin api group user enable = discard $
-  api "set_group_admin"
+switchGroupAdmin :: MonadIO m => GroupId -> UserId -> Bool -> ApiT m ()
+switchGroupAdmin group user enable = discard $
+  callApi "set_group_admin"
     [ "group_id" .= group
     , "user_id" .= user
     , "enable" .= enable]
 
-setGroupAdmin :: ApiCaller -> GroupId -> UserId -> IO ()
-setGroupAdmin api group user =
-  switchGroupAdmin api group user True
+setGroupAdmin :: MonadIO m => GroupId -> UserId -> ApiT m ()
+setGroupAdmin group user =
+  switchGroupAdmin group user True
 
-unsetGroupAdmin :: ApiCaller -> GroupId -> UserId -> IO ()
-unsetGroupAdmin api group user =
-  switchGroupAdmin api group user False
+unsetGroupAdmin :: MonadIO m => GroupId -> UserId -> ApiT m ()
+unsetGroupAdmin group user =
+  switchGroupAdmin group user False
 
-switchGroupAnonymous :: ApiCaller -> GroupId -> Bool -> IO ()
-switchGroupAnonymous api group enable = discard $
-  api "set_group_anonymous"
+switchGroupAnonymous :: MonadIO m => GroupId -> Bool -> ApiT m ()
+switchGroupAnonymous group enable = discard $
+  callApi "set_group_anonymous"
     [ "group_id" .= group
     , "enable" .= enable]
 
-setGroupAnonymous :: ApiCaller -> GroupId -> IO ()
-setGroupAnonymous api group =
-  switchGroupAnonymous api group True
+setGroupAnonymous :: MonadIO m => GroupId -> ApiT m ()
+setGroupAnonymous group =
+  switchGroupAnonymous group True
 
-unsetGroupAnonymous :: ApiCaller -> GroupId -> IO ()
-unsetGroupAnonymous api group =
-  switchGroupAnonymous api group False
+unsetGroupAnonymous :: MonadIO m => GroupId -> ApiT m ()
+unsetGroupAnonymous group =
+  switchGroupAnonymous group False
 
-setGroupCard :: ApiCaller -> GroupId -> UserId -> Text -> IO ()
-setGroupCard api group user card = discard $
-  api "set_group_card"
+setGroupCard :: MonadIO m => GroupId -> UserId -> Text -> ApiT m ()
+setGroupCard group user card = discard $
+  callApi "set_group_card"
     [ "group_id" .= group
     , "user_id" .= user
     , "card" .= card ]
 
-setGroupLeave :: ApiCaller -> GroupId -> IO ()
-setGroupLeave api group = discard $
-  api "set_group_leave"
+setGroupLeave :: MonadIO m => GroupId -> ApiT m ()
+setGroupLeave group = discard $
+  callApi "set_group_leave"
     [ "group_id" .= group ]
 
-setGroupDismiss :: ApiCaller -> GroupId -> IO ()
-setGroupDismiss api group = discard $
-  api "set_group_leave"
+setGroupDismiss :: MonadIO m => GroupId -> ApiT m ()
+setGroupDismiss group = discard $
+  callApi "set_group_leave"
     [ "group_id" .= group
     , "is_dismiss" .= True ]
 
-setGroupSpecialTitle :: ApiCaller -> GroupId -> UserId -> Text -> IO ()
-setGroupSpecialTitle api group user title = discard $
-  api "set_group_special_title"
+setGroupSpecialTitle :: MonadIO m => GroupId -> UserId -> Text -> ApiT m ()
+setGroupSpecialTitle group user title = discard $
+  callApi "set_group_special_title"
     [ "group_id" .= group
     , "user_id" .= user
     , "special_title" .= title ]
 
-setDiscussLeave :: ApiCaller -> DiscussId -> IO ()
-setDiscussLeave api discuss = discard $
-  api "set_discuss_leave"
+setDiscussLeave :: MonadIO m => DiscussId -> ApiT m ()
+setDiscussLeave discuss = discard $
+  callApi "set_discuss_leave"
     [ "discuss_id" .= discuss ]
+
+setFriendAddRequest :: MonadIO m => RequestFlag -> Bool -> Text -> ApiT m ()
+setFriendAddRequest flag approve remark = discard $
+  callApi "set_friend_add_request"
+    [ "flag" .= flag
+    , "approve" .= approve
+    , "remark" .= remark ]
+
+approveFriendAddRequest :: MonadIO m => RequestFlag -> ApiT m ()
+approveFriendAddRequest flag =
+  setFriendAddRequest flag True ""
+
+rejectFriendAddRequest :: MonadIO m => RequestFlag -> ApiT m ()
+rejectFriendAddRequest flag =
+  setFriendAddRequest flag False ""
+
+setGroupAddRequest :: MonadIO m => GroupRequestType -> RequestFlag -> Bool -> Text -> ApiT m ()
+setGroupAddRequest typ flag approve reason = discard $
+  callApi "set_group_add_request"
+    [ "type" .=
+        (case typ of
+          GroupAddRequest -> "add" :: Text
+          GroupInviteRequest -> "invite" :: Text)
+    , "flag" .= flag
+    , "approve" .= approve
+    , "reson" .= reason ]
+
+approveGroupAddRequest :: MonadIO m => GroupRequestType -> RequestFlag -> ApiT m ()
+approveGroupAddRequest typ flag =
+  setGroupAddRequest typ flag True ""
+
+rejectGroupAddRequest :: MonadIO m => GroupRequestType -> RequestFlag -> Text -> ApiT m ()
+rejectGroupAddRequest typ flag reason =
+  setGroupAddRequest typ flag False reason
+
+data LoginInfo =
+  LoginInfo
+  { user_id :: UserId
+  , nickname :: Text }
+  deriving (Show, Eq, Generic)
+instance FromJSON LoginInfo
+
+getLoginInfo :: MonadIO m => ApiT m LoginInfo
+getLoginInfo = liftedFromJSON $
+  callApi "get_login_info" []
+
+data StrangerInfo =
+  StrangerInfo
+  { user_id :: UserId
+  , nickname :: Text
+  , sex :: Text
+  , age :: Int }
+  deriving (Show, Eq, Generic)
+instance FromJSON StrangerInfo
+
+_getStrangerInfo :: MonadIO m => UserId -> Bool -> ApiT m StrangerInfo
+_getStrangerInfo user noCache = liftedFromJSON $
+  callApi "get_stranger_info"
+    [ "user_id" .= user
+    , "no_cache" .= noCache ]
+
+getStrangerInfo :: MonadIO m => UserId -> ApiT m StrangerInfo
+getStrangerInfo user =
+  _getStrangerInfo user False
+
+getUncachedStrangerInfo :: MonadIO m => UserId -> ApiT m StrangerInfo
+getUncachedStrangerInfo user =
+  _getStrangerInfo user True
