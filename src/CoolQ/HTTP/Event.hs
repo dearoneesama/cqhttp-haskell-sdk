@@ -34,7 +34,7 @@ import Network.HTTP.Types
   ( ok200
   , unauthorized401
   , forbidden403 )
-import Control.Concurrent.Async
+import Control.Concurrent.Async.Lifted.Safe
   ( mapConcurrently
   , concurrently )
 import Control.Concurrent.Chan
@@ -42,9 +42,10 @@ import Control.Concurrent.Chan
   , newChan
   , writeChan
   , dupChan )
+import Control.Monad.Reader
+  ( runReaderT )
 import CoolQ.HTTP.Api
   ( ApiCaller
-  , ApiT (runApiT)
   , ApiM )
 
 data EventConfig =
@@ -79,4 +80,4 @@ listen conf caller handlers = do
   runHandler :: Chan Object -> ApiM a -> IO a
   runHandler chan f = do
     chan' <- dupChan chan
-    runApiT f (caller, chan')
+    runReaderT f (caller, chan')

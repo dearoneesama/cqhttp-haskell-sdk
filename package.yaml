@@ -14,19 +14,18 @@ category:            Web
 description:         Please see the README on GitHub at <https://github.com/t532/cqhttp#readme>
 
 dependencies:
-- base >= 4.7 && < 5
-- async
-- req
-- scotty
 - aeson
-- text
+- base >= 4.7 && < 5
 - bytestring
 - cryptonite
 - http-types
-- time
-- unordered-containers
+- lifted-async
 - mtl
+- req
 - scientific
+- scotty
+- text
+- unordered-containers
 
 library:
   source-dirs: src

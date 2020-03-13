@@ -1,6 +1,7 @@
 {-# LANGUAGE  OverloadedStrings
             , DeriveGeneric
-            , DuplicateRecordFields #-}
+            , DuplicateRecordFields
+            , LiberalTypeSynonyms #-}
 
 module CoolQ.HTTP.Api
   ( ApiConfig (..)
@@ -72,6 +73,8 @@ import Control.Monad.IO.Class
   ( MonadIO )
 import Data.HashMap.Strict
   ( (!) )
+import Control.Monad.Reader
+  ( ReaderT (ReaderT) )
 
 type UserId = Int
 type GroupId = Int
@@ -116,7 +119,7 @@ liftedFromJSON val = do
     _ -> error "The data is not an object. This should not happen"
 
 callApi :: ApiCaller (ApiT o m)
-callApi method payload = ApiT $ \(api, _) ->
+callApi method payload = ReaderT $ \(api, _) ->
   api method payload
 
 sendPrivateMsg :: MonadIO m => UserId -> Message -> ApiT o m MessageId
