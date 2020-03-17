@@ -25,6 +25,7 @@ dependencies:
 - scientific
 - scotty
 - text
+- time
 - unordered-containers
 
 library:

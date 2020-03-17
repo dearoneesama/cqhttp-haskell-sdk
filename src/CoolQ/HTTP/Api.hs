@@ -59,12 +59,15 @@ module CoolQ.HTTP.Api
   , getUncachedStrangerInfo ) where
 import CoolQ.HTTP.Api.Caller
 import CoolQ.HTTP.Api.Monad
+import CoolQ.HTTP.Internal.Util
 import GHC.Generics
   ( Generic )
 import Data.Aeson
   ( Value (Number, Object)
   , (.=)
-  , FromJSON
+  , (.:)
+  , FromJSON (parseJSON)
+  , withObject
   , fromJSON
   , Result (Success) )
 import Data.Text
@@ -75,6 +78,11 @@ import Data.HashMap.Strict
   ( (!) )
 import Control.Monad.Reader
   ( ReaderT (ReaderT) )
+import Data.Time
+  ( NominalDiffTime
+  , UTCTime )
+import Data.Maybe
+  ( fromMaybe )
 
 type UserId = Int
 type GroupId = Int
@@ -89,19 +97,29 @@ data GroupRequestType =
   GroupAddRequest |
   GroupInviteRequest
   deriving (Show, Eq)
+data Sex =
+  Male |
+  Female |
+  Unknown
+  deriving (Show, Eq)
 type AnonymousFlag = Text
 type RequestFlag = Text
 type Message = [Value]
-type Duration = Int
+type Duration = NominalDiffTime
+
+toSex :: Text -> Sex
+toSex "male" = Male
+toSex "female" = Female
+toSex _ = Unknown
 
 discard :: Monad m => m a -> m ()
 discard = (>> pure ())
 
-liftedToInt :: Monad m => m Value -> m Int
-liftedToInt val = do
+liftedToIntegral :: (Monad m, Integral a) => m Value -> m a
+liftedToIntegral val = do
   uval <- val
   case uval of
-    (Number sci) -> pure (toInt sci)
+    (Number sci) -> pure (toIntegral sci)
     _ -> error "The data is not a number. This should not happen"
 
 liftedIndex :: Monad m => Text -> m Value -> m Value
@@ -123,25 +141,25 @@ callApi method payload = ReaderT $ \(api, _) ->
   api method payload
 
 sendPrivateMsg :: MonadIO m => UserId -> Message -> ApiT o m MessageId
-sendPrivateMsg user msg = liftedToInt $ liftedIndex "message_id" $
+sendPrivateMsg user msg = liftedToIntegral $ liftedIndex "message_id" $
   callApi "send_private_msg"
     [ "user_id" .= user
     , "message" .= msg ]
 
 sendGroupMsg :: MonadIO m => GroupId -> Message -> ApiT o m MessageId
-sendGroupMsg group msg = liftedToInt $ liftedIndex "message_id" $
+sendGroupMsg group msg = liftedToIntegral $ liftedIndex "message_id" $
   callApi "send_group_msg"
     [ "group_id" .= group
     , "message" .= msg ]
 
 sendDiscussMsg :: MonadIO m => DiscussId -> Message -> ApiT o m MessageId
-sendDiscussMsg discuss msg = liftedToInt $ liftedIndex "message_id" $
+sendDiscussMsg discuss msg = liftedToIntegral $ liftedIndex "message_id" $
   callApi "send_discuss_msg"
     [ "discuss_id" .= discuss
     , "message" .= msg ]
 
 sendMsg :: MonadIO m => MessageType -> Int -> Message -> ApiT o m MessageId
-sendMsg typ id msg = liftedToInt $ liftedIndex "message_id" $
+sendMsg typ id msg = liftedToIntegral $ liftedIndex "message_id" $
   callApi "send_msg"
     [ "message" .= msg
     , (case typ of
@@ -172,7 +190,7 @@ setGroupBan group user duration = discard $
   callApi "set_group_ban"
     [ "group_id" .= group
     , "user_id" .= user
-    , "duration" .= duration ]
+    , "duration" .= (toMilliseconds duration :: Int) ]
 
 unsetGroupBan :: MonadIO m => GroupId -> UserId -> ApiT o m ()
 unsetGroupBan group user =
@@ -218,7 +236,7 @@ switchGroupAnonymous :: MonadIO m => GroupId -> Bool -> ApiT o m ()
 switchGroupAnonymous group enable = discard $
   callApi "set_group_anonymous"
     [ "group_id" .= group
-    , "enable" .= enable]
+    , "enable" .= enable ]
 
 setGroupAnonymous :: MonadIO m => GroupId -> ApiT o m ()
 setGroupAnonymous group =
@@ -305,12 +323,18 @@ getLoginInfo = liftedFromJSON $
 
 data StrangerInfo =
   StrangerInfo
-  { user_id :: UserId
+  { userId :: UserId
   , nickname :: Text
-  , sex :: Text
+  , sex :: Sex
   , age :: Int }
   deriving (Show, Eq, Generic)
-instance FromJSON StrangerInfo
+instance FromJSON StrangerInfo where
+  parseJSON =
+    withObject "StrangerInfo" $ \v -> StrangerInfo
+      <$> v.:"user_id"
+      <*> v.:"nickname"
+      <*> (toSex <$> (v.:"sex"))
+      <*> v.:"age"
 
 _getStrangerInfo :: MonadIO m => UserId -> Bool -> ApiT o m StrangerInfo
 _getStrangerInfo user noCache = liftedFromJSON $
@@ -325,3 +349,96 @@ getStrangerInfo user =
 getUncachedStrangerInfo :: MonadIO m => UserId -> ApiT o m StrangerInfo
 getUncachedStrangerInfo user =
   _getStrangerInfo user True
+
+data FriendListItem =
+  FriendListItem
+  { userId :: UserId
+  , nickname :: Text
+  , remark :: Text }
+  deriving (Show, Eq, Generic)
+instance FromJSON FriendListItem where
+  parseJSON =
+    withObject "FriendListItem" $ \v -> FriendListItem
+      <$> v.:"user_id"
+      <*> v.:"nickname"
+      <*> v.:"remark"
+
+getFriendList :: MonadIO m => ApiT o m [FriendListItem]
+getFriendList = liftedFromJSON $
+  callApi "get_friend_list" []
+
+data GroupListItem =
+  GroupListItem
+  { groupId :: GroupId
+  , groupName :: Text }
+  deriving (Show, Eq, Generic)
+instance FromJSON GroupListItem where
+  parseJSON =
+    withObject "GroupListItem" $ \v -> GroupListItem
+      <$> v.:"group_id"
+      <*> v.:"group_ame"
+
+getGroupList :: MonadIO m => ApiT o m [GroupListItem]
+getGroupList = liftedFromJSON $
+  callApi "get_group_list" []
+
+data GroupInfo =
+  GroupInfo
+  { groupId :: GroupId
+  , groupName :: Text
+  , memberCount :: Int
+  , maxMemberCount :: Int }
+  deriving (Show, Eq, Generic)
+instance FromJSON GroupInfo where
+  parseJSON =
+    withObject "GroupInfo" $ \v -> GroupInfo
+      <$> v.:"group_id"
+      <*> v.:"group_name"
+      <*> v.:"member_count"
+      <*> v.:"max_member_count"
+
+_getGroupInfo :: MonadIO m => UserId -> Bool -> ApiT o m GroupInfo
+_getGroupInfo user noCache = liftedFromJSON $
+  callApi "get_group_info"
+    [ "group_id" .= user
+    , "no_cache" .= noCache ]
+
+getGroupInfo :: MonadIO m => UserId -> ApiT o m GroupInfo
+getGroupInfo user =
+  _getGroupInfo user False
+
+getUncachedGroupInfo :: MonadIO m => UserId -> ApiT o m GroupInfo
+getUncachedGroupInfo user =
+  _getGroupInfo user True
+
+{-
+-- TODO
+data GroupMemberInfo =
+  GroupMemberInfo
+  { groupId :: GroupId
+  , userId :: UserId
+  , nickname :: Text
+  , card :: Text
+  , sex :: Sex
+  , age :: Int
+  , area :: Text
+  , joinTime :: UTCTime
+  , lastSentTime :: UTCTime
+  , level :: Text
+  , role :: Text
+  , unfriendly :: Bool
+  , title :: Text
+  , titleExpireTime :: UTCTime
+  , cardChangeable :: Bool }
+instance FromJSON GroupMemberInfo where
+  parseJSON =
+    withObject "GroupMemberInfo" $ \v -> GroupMemberInfo
+      <$> v.:"group_id"
+      <*> v.:"user_id"
+      <*> v.:"nickname"
+      <*> v.:"card"
+      <*> (toSex <$> v.:"sex")
+      <*> v.:"age"
+      <*> v.:"area"
+      <*> v.:"join_time"
+-}
