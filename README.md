@@ -4,8 +4,12 @@
 
 ## 限制
 
+### CQHTTP 版本相关
+由于 Haskell 的强类型特性，强烈推荐只使用 CQHTTP v4.14（latest）及以后的 v4.x 版本。
+之前的版本很可能导致兼容性问题。
+
 ### WebSocket API 相关
-目前没有支持 WebSocket/反向 WebSocket 的计划，因为太难写了。
+很抱歉，目前的精力不足以支持实现 WebSocket/反向 WebSocket 通信方式（API 调用部分甚至难以实现）。
 如果您乐意贡献相关内容，我很欢迎。
 
 ### 异步相关

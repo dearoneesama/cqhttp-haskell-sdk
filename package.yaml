@@ -24,6 +24,7 @@ dependencies:
 - req
 - scientific
 - scotty
+- template-haskell
 - text
 - time
 - unordered-containers

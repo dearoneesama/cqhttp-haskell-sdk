@@ -8,7 +8,7 @@ module CoolQ.HTTP.Api.Caller
   , toIntegral
   , makeApiCaller ) where
 import Network.HTTP.Req
-import CoolQ.HTTP.Internal.Util
+import CoolQ.HTTP.Api.Internal.Util
 import Data.Aeson
   ( Value (Number, Object, Null)
   , object )
