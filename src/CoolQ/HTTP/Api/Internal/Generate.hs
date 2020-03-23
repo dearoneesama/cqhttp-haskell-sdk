@@ -29,7 +29,7 @@ toSnakeCase (x : xs)
 toSnakeCase "" = ""
 
 toRegularType :: Type -> Type
-toRegularType (AppT (AppT ArrowT (AppT tx (LitT (StrTyLit _)))) y) =
+toRegularType (AppT (AppT ArrowT tx) y) =
   AppT (AppT ArrowT tx) (toRegularType y)
 toRegularType x =
   ForallT [PlainTV o, PlainTV m] [AppT (ConT ''MonadIO) (VarT m)]
@@ -38,22 +38,23 @@ toRegularType x =
   o = mkName "o"
   m = mkName "m"
 
-getParams :: Type -> [String]
-getParams (AppT (AppT ArrowT (AppT _ (LitT (StrTyLit nx)))) y) =
-  nx : getParams y
-getParams x = []
-
 generateApiCall :: Name -> [String] -> Exp
 generateApiCall apiName params =
-  AppE (AppE (VarE 'callApi) (LitE (StringL (toSnakeCase (nameBase apiName)))))
+  AppE (AppE (VarE 'callApi) (LitE (StringL realApiName)))
     (ListE (fmap (\x -> AppE (AppE (VarE '(.=)) (LitE (StringL (toSnakeCase x)))) (VarE (mkName x))) params))
+  where
+  realApiName = (toSnakeCase (nameBase apiName))
 
 defineIndividual :: Dec -> [Dec]
-defineIndividual (ValD (VarP apiName) (NormalB (SigE fun typ)) _) =
-  [ (SigD apiName (toRegularType typ))
-  , (FunD apiName [(Clause ((VarP . mkName) <$> params) (NormalB (AppE fun (generateApiCall apiName params))) [])]) ]
+defineIndividual (FunD apiName [Clause params (NormalB (SigE fun typ)) _]) =
+  [ (SigD apiName apiType)
+  , (FunD apiName [(Clause params (NormalB apiCallExpr) [])]) ]
   where
-  params = getParams typ
+  apiType = toRegularType typ
+  apiCallExpr = (AppE fun (generateApiCall apiName stringifiedParams))
+  stringifiedParams = (\x -> let (VarP nm) = x in nameBase nm) <$> params
+defineIndividual (ValD (VarP apiName) body _) =
+  defineIndividual (FunD apiName [Clause [] body []])
 
 defineApi :: Q [Dec] -> Q [Dec]
 defineApi ds = (defineIndividual =<<) <$> ds

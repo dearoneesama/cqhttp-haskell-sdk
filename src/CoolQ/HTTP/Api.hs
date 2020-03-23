@@ -1,6 +1,7 @@
 {-# LANGUAGE  OverloadedStrings
             , DeriveGeneric
             , DuplicateRecordFields
+            , LiberalTypeSynonyms
             , RankNTypes
             , TemplateHaskell
             , DataKinds #-}
@@ -73,7 +74,7 @@ data Sex =
 type AnonymousFlag = Text
 type RequestFlag = Text
 type Message = [Value]
-type Duration = NominalDiffTime
+type Duration = Int
 
 discard :: Monad m => m a -> m ()
 discard = (>> pure ())
@@ -99,26 +100,8 @@ liftedFromJSON val = do
     (Success obj) -> pure obj
     _ -> error "The data is not an object. This should not happen"
 
-$(defineApi [d|
 
-  sendPrivateMsg = liftedToIntegral . liftedIndex "messsage_id"
-    :: UserId "userId" -> Message "message" -> MessageId
-
-  sendGroupMsg = liftedToIntegral . liftedIndex "message_id"
-    :: GroupId "group_id" -> Message "message" -> MessageId
-
-  sendDiscussMsg = liftedToIntegral . liftedIndex "message_id"
-    :: DiscussId "discuss_id" -> Message "message" -> MessageId
-
-  |])
-
-{-
-sendDiscussMsg :: MonadIO m => Message -> DiscussId -> ApiT o m MessageId
-sendDiscussMsg msg discuss = liftedToIntegral $ liftedIndex "message_id" $
-  callApi "send_discuss_msg"
-    [ "discuss_id" .= discuss
-    , "message" .= msg ]
-
+-- These APIs are specially implemented because of the pattern matching.
 sendMsg :: MonadIO m => Message -> MessageType -> Int -> ApiT o m MessageId
 sendMsg msg typ id = liftedToIntegral $ liftedIndex "message_id" $
   callApi "send_msg"
@@ -128,130 +111,69 @@ sendMsg msg typ id = liftedToIntegral $ liftedIndex "message_id" $
         DiscussMessage -> "discuss_id"
         GroupMessage -> "group_id") .= id]
 
-deleteMsg :: MonadIO m => MessageId -> ApiT o m ()
-deleteMsg id = discard $
-  callApi "delete_msg"
-    [ "message_id" .= id ]
-
-sendLike :: MonadIO m => Int -> UserId -> ApiT o m ()
-sendLike times user = discard $
-  callApi "send_like"
-    [ "user_id" .= user
-    , "times" .= times ]
-
-setGroupKick :: MonadIO m => Bool -> GroupId -> UserId -> ApiT o m ()
-setGroupKick rejectAddRequest group user = discard $
-  callApi "set_group_kick"
-    [ "group_id" .= group
-    , "user_id" .= user
-    , "reject_add_request" .= rejectAddRequest ]
-
-setGroupBan :: MonadIO m => Duration -> GroupId -> UserId -> ApiT o m ()
-setGroupBan duration group user = discard $
-  callApi "set_group_ban"
-    [ "group_id" .= group
-    , "user_id" .= user
-    , "duration" .= (toMilliseconds duration :: Int) ]
-
-unsetGroupBan :: MonadIO m => GroupId -> UserId -> ApiT o m ()
-unsetGroupBan =
-  setGroupBan 0
-
-setGroupAnonymousBan :: MonadIO m => Duration -> GroupId -> AnonymousFlag -> ApiT o m ()
-setGroupAnonymousBan duration group flag = discard $
-  callApi "set_group_anonymous_ban"
-    [ "group_id" .= group
-    , "anonymous_flag" .= flag
-    , "duration" .= duration ]
-
-switchGroupWholeBan :: MonadIO m => Bool -> GroupId -> ApiT o m ()
-switchGroupWholeBan enable group = discard $
-  callApi "set_group_whole_ban"
-    [ "group_id" .= group
-    , "enable" .= enable ]
-
-setGroupWholeBan :: MonadIO m => GroupId -> ApiT o m ()
-setGroupWholeBan =
-  switchGroupWholeBan True
-
-unsetGroupWholeBan :: MonadIO m => GroupId -> ApiT o m ()
-unsetGroupWholeBan =
-  switchGroupWholeBan False
-
-switchGroupAdmin :: MonadIO m => Bool -> GroupId -> UserId -> ApiT o m ()
-switchGroupAdmin enable group user = discard $
-  callApi "set_group_admin"
-    [ "group_id" .= group
-    , "user_id" .= user
-    , "enable" .= enable]
-
-setGroupAdmin :: MonadIO m => GroupId -> UserId -> ApiT o m ()
-setGroupAdmin =
-  switchGroupAdmin True
-
-unsetGroupAdmin :: MonadIO m => GroupId -> UserId -> ApiT o m ()
-unsetGroupAdmin =
-  switchGroupAdmin False
-
-switchGroupAnonymous :: MonadIO m => Bool -> GroupId -> ApiT o m ()
-switchGroupAnonymous enable group = discard $
-  callApi "set_group_anonymous"
-    [ "group_id" .= group
-    , "enable" .= enable ]
-
-setGroupAnonymous :: MonadIO m => GroupId -> ApiT o m ()
-setGroupAnonymous =
-  switchGroupAnonymous True
-
-unsetGroupAnonymous :: MonadIO m => GroupId -> ApiT o m ()
-unsetGroupAnonymous =
-  switchGroupAnonymous False
-
-setGroupCard :: MonadIO m => Text -> GroupId -> UserId -> ApiT o m ()
-setGroupCard card group user = discard $
-  callApi "set_group_card"
-    [ "group_id" .= group
-    , "user_id" .= user
-    , "card" .= card ]
-
-setGroupLeave :: MonadIO m => GroupId -> ApiT o m ()
-setGroupLeave group = discard $
-  callApi "set_group_leave"
-    [ "group_id" .= group ]
-
-setGroupDismiss :: MonadIO m => GroupId -> ApiT o m ()
-setGroupDismiss group = discard $
-  callApi "set_group_leave"
-    [ "group_id" .= group
-    , "is_dismiss" .= True ]
-
-setGroupSpecialTitle :: MonadIO m => Text -> GroupId -> UserId -> ApiT o m ()
-setGroupSpecialTitle title group user = discard $
-  callApi "set_group_special_title"
-    [ "group_id" .= group
-    , "user_id" .= user
-    , "special_title" .= title ]
-
-setDiscussLeave :: MonadIO m => DiscussId -> ApiT o m ()
-setDiscussLeave discuss = discard $
-  callApi "set_discuss_leave"
-    [ "discuss_id" .= discuss ]
-
-setFriendAddRequest :: MonadIO m => Bool -> Text -> RequestFlag -> ApiT o m ()
-setFriendAddRequest approve remark flag = discard $
-  callApi "set_friend_add_request"
-    [ "flag" .= flag
+setGroupAddRequest :: MonadIO m => Bool -> Text -> GroupRequestType -> RequestFlag -> ApiT o m ()
+setGroupAddRequest approve reason typ flag = discard $
+  callApi "set_group_add_request"
+    [ "type" .=
+        (case typ of
+          GroupAddRequest -> "add" :: Text
+          GroupInviteRequest -> "invite" :: Text)
+    , "flag" .= flag
     , "approve" .= approve
-    , "remark" .= remark ]
+    , "reson" .= reason ]
 
-approveFriendAddRequest :: MonadIO m => RequestFlag -> ApiT o m ()
-approveFriendAddRequest =
-  setFriendAddRequest True ""
+$(defineApi [d|
 
-rejectFriendAddRequest :: MonadIO m => RequestFlag -> ApiT o m ()
-rejectFriendAddRequest =
-  setFriendAddRequest False ""
+  sendPrivateMsg userId message = liftedToIntegral . liftedIndex "messsage_id"
+    :: UserId -> Message -> MessageId
 
+  sendGroupMsg groupId message = liftedToIntegral . liftedIndex "message_id"
+    :: GroupId -> Message -> MessageId
+
+  sendDiscussMsg discussId message = liftedToIntegral . liftedIndex "message_id"
+    :: DiscussId -> Message -> MessageId
+
+  deleteMsg messageId = discard
+    :: MessageId -> ()
+
+  sendLike userId times = discard
+    :: UserId -> Int -> ()
+
+  setGroupKick groupId userId rejectAddRequest = discard
+    :: GroupId -> UserId -> Bool -> ()
+
+  setGroupBan groupId userId duration = discard
+    :: GroupId -> UserId -> Duration -> ()
+
+  setGroupAnonymousBan groupId anonymousFlag duration = discard
+    :: GroupId -> AnonymousFlag -> Duration -> ()
+  
+  setGroupWholeBan groupId enable = discard
+    :: GroupId -> Bool -> ()
+
+  setGroupAdmin groupId userId enable = discard
+    :: GroupId -> UserId -> Bool -> ()
+
+  setGroupAnonymous groupId enable = discard
+    :: GroupId -> Bool -> ()
+
+  setGroupCard groupId userId card = discard
+    :: GroupId -> UserId -> Text -> ()
+
+  setGroupLeave groupId isDismiss = discard
+    :: GroupId -> Bool -> ()
+
+  setGroupSpecialTitle groupId userId specialTitle = discard
+    :: GroupId -> UserId -> Text -> ()
+
+  setDiscussLeave discussId = discard
+    :: DiscussId -> ()
+
+  setFriendAddRequest flag approve remark = discard
+    :: RequestFlag -> Bool -> Text -> ()
+
+  |])
+{-
 setGroupAddRequest :: MonadIO m => Bool -> Text -> GroupRequestType -> RequestFlag -> ApiT o m ()
 setGroupAddRequest approve reason typ flag = discard $
   callApi "set_group_add_request"
